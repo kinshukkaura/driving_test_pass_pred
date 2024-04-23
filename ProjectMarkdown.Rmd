@@ -1,0 +1,318 @@
+---
+title: "ProjectMarkdown"
+output:
+  word_document: default
+  html_document: default
+date: "2022-11-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Profile
+
+```{r}
+ID = 202249724
+source('XYZprofile.r')
+XYZprofile(ID)
+```
+
+#### Importing libraries
+
+```{r}
+library(readODS)
+library(dplyr)
+library(ggpubr)
+library(ggplot2)
+library(tidyverse)
+library(CatEncoders)
+```
+
+## Cleaning and wrangling the data
+
+```{r}
+datall = read.ods(file = 'dvsa1203.ods')
+dat = datall[2:16] #The first sheet contains content and metadata.
+```
+
+Looping through our list of dataframe,
+
+```{r}
+cleaned_data = list()
+for (i in 1:length(dat)) {
+    
+    cleaned_data[[i]] <- dat[[i]][-(1:7),] 
+    #Removing metadata; {first 6 rows and the column names(we will assign new ones later)}
+    if (i > 7){ #Removing empty columns in some sheets and fixing their column names
+        cleaned_data[[i]] <- cleaned_data[[i]][-c(6,10)]
+        colnames(cleaned_data[[i]]) = colnames(cleaned_data[[1]])}
+}
+```
+
+Binding all of the dataframes in the above list in one, and assigning column names
+
+```{r}
+full_data = bind_rows(cleaned_data, .id = 'Year', )
+colnames(full_data) = c('Year','Centre','Age','Conducted_Male','Passes_Male','Pass_Rate_Male',
+             'Conducted_Female','Passes_Female','Pass_Rate_Female',
+             'Conducted_Total','Passes_Total','Pass_Rate_Total')
+```
+
+Re-encoding missing values of centres
+
+```{r}
+full_data$Centre[which(full_data$Centre == "",arr.ind = TRUE)] <- NA
+full_data <- full_data %>% fill(Centre, .direction = 'down')
+```
+
+```{r}
+full_data[which(full_data == "..",arr.ind = TRUE)] <- NA
+```
+
+Re-encoding the years
+
+```{r}
+for (i in 1:15) {
+    full_data$Year[which(full_data$Year == i,arr.ind = TRUE)] <- 2006 + i}
+```
+## Exploring the Data
+
+```{r}
+Passrates <- as.numeric(full_data$Pass_Rate_Male)
+mean(Passrates,na.rm = TRUE);sd(Passrates,na.rm = TRUE)
+```
+
+
+```{r, figures-side, fig.show="hold", out.width="50%"}
+par(mar = c(4, 4, .1, .1))
+ggplot(data.frame(Passrates), aes(x=Passrates)) +
+geom_histogram(aes(y = after_stat(density)), col="paleturquoise",na.rm = TRUE) +
+ggtitle("Density plot of Pass Rates") + xlab("Passing Rates") + stat_function(fun = dnorm, args = list(mean = mean(Passrates,na.rm = TRUE), sd = sd(Passrates,na.rm = TRUE)), lwd=1.5, col="brown1")
+ggqqplot(Passrates)
+```
+
+
+```{r}
+
+```
+
+
+Function for getting data of specific city
+
+```{r}
+specity <- function(city){
+    citydata <- data.frame()
+    
+    x <- which(full_data== city,arr.ind = TRUE)
+    p <- full_data[x[,1],]
+    citydata <- rbind(citydata,p)
+    rownames(citydata) <- NULL
+    citydata <- citydata[citydata$Centre == city,]
+    citydata <- citydata[!(citydata$Age == 'Total' | citydata$Age == ''),]
+    return(citydata)
+}
+```
+
+```{r}
+nearLSE <- specity('Wood Green (London)')
+```
+We see that data is missing for years past 9, as city name is different being Wood Green. So, we will combine this data too.
+
+```{r}
+extra <- specity('Wood Green')
+nearLSE <- rbind(nearLSE,extra)
+```
+
+
+```{r}
+nearhome <- specity('Nottingham (Colwick)')
+```
+
+
+Function to get data for specific Age
+
+```{r}
+specage <- function(df,age){
+    agedata <- data.frame()
+    x <- which(df$Age== age,arr.ind = TRUE)
+    p <- df[x,]
+    agedata <- rbind(agedata,p)
+    rownames(agedata) <- NULL
+    return(agedata)
+}
+```
+
+```{r}
+LSEaged <- specage(nearLSE,25)
+```
+
+
+```{r}
+homeaged <- specage(nearhome,25)
+```
+```{r}
+library(writexl)
+write_xlsx(homeaged,'Nottinghamaged.xlsx')
+write_xlsx(LSEaged,'LSEaged.xlsx')
+write_xlsx(nearhome,'Nottingham.xlsx')
+write_xlsx(nearLSE,'LSE.xlsx')
+
+```
+
+```{r}
+write_xlsx(full_data,'full_data.xlsx')
+```
+
+
+```{r}
+library(nortest)
+ad.test(Passrates)
+ks.test(Passrates,'pnorm')
+```
+
+
+```{r}
+numhome <- data.frame(sapply(nearhome, function(x) as.numeric(as.character(x))))
+```
+```{r}
+numhome['Centre'] <- rep(1,nrow(numhome))
+
+```
+
+```{r}
+male <- numhome[,c(1,2,3,5)]
+                                                                                                                                
+duplicate <- function(year,centre,age,response){
+    expanded <- 1:response
+    repeated <- data.frame('Year' = year,'Centre' = centre, 'Age' = age,'pass_fail' = expanded)
+}
+expanded_rows <- Map(f = duplicate,male$Year, male$Centre, male$Age,male$Passes_Male)
+maled <- do.call(rbind,expanded_rows)
+```
+
+```{r}
+maled$pass_fail <- rep(1,length(maled$pass_fail))
+```
+```{r}
+malefail <- numhome[,c(1,2,3)]
+malefail['Fails_male'] <- numhome$Conducted_Male - numhome$Passes_Male
+```
+```{r}
+fexpanded_rows <- Map(f = duplicate,malefail$Year,malefail$Centre,malefail$Age,malefail$Fails_male)
+malefailed <- do.call(rbind,fexpanded_rows)
+malefailed$pass_fail <- rep(0,length(malefailed$pass_fail))
+```
+```{r}
+homelogistic <- rbind(maled,malefailed)
+```
+```{r}
+numlse <- data.frame(sapply(nearLSE, function(x) as.numeric(as.character(x))))
+
+numlse['Centre'] <- rep(0,nrow(numlse))
+
+lsepasses <- numlse[,c(1,2,3,5)]
+lsexpanded <-  Map(f = duplicate,lsepasses$Year,lsepasses$Centre,lsepasses$Age,lsepasses$Passes_Male)
+lsepassed <- do.call(rbind,lsexpanded)
+lsepassed['pass_fail'] <- rep(1,nrow(lsepassed))
+```
+
+```{r}
+lsefails <- numlse[,c(1,2,3)]
+lsefails['pass_fail'] <- numlse$Conducted_Male - numlse$Passes_Male
+
+lsefexpanded <- Map(f = duplicate,lsefails$Year,lsefails$Centre,lsefails$Age,lsefails$pass_fail) 
+lsefailed <- do.call(rbind,lsefexpanded)
+lsefailed$pass_fail <- rep(0,nrow(lsefailed))
+```
+```{r}
+lselogistic <- rbind(lsepassed, lsefailed)
+```
+
+```{r}
+logisticdat = rbind(homelogistic,lselogistic)
+```
+
+To adjust for the high value of years affecting the model, we will encode the Years as 1,2,.....15
+```{r}
+logisticdat$Year <- as.numeric(factor(logisticdat$Year))
+```
+
+
+
+
+
+```{r}
+model <- glm(pass_fail~.,data = logisticdat)
+```
+
+```{r}
+summary(model)
+```
+
+We can compute a chi-square statistic to test if a model is useful.
+Chi-Sq statistic : 15013 - 14916 = 97 for 60060 - 60057 = 3 dof
+
+```{r}
+test <- function(age,year,centre){
+    Age <- c(age);Year <- c(year);Centre <- c(centre)
+    test <- data.frame(Year,Age,Centre)
+    return(test)}
+```
+
+```{r}
+c(predict.glm(model,test(25,16,1),se.fit = TRUE),predict.glm(model,test(25,16,0),se.fit = TRUE))
+```
+
+
+```{r}
+library(rms)
+lrm(pass_fail~.,data = logisticdat)
+```
+
+```{r}
+library(ggplot2)
+lseagednum <- data.frame(sapply(LSEaged, function(x) as.numeric(as.character(x))))
+homeagednum <- data.frame(sapply(homeaged, function(x) as.numeric(as.character(x))))
+```
+
+
+```{r}
+ggplot(data = lseagednum,aes(Year,Pass_Rate_Male, col = 'LSE')) +  geom_point() + geom_line() + geom_point(data = homeagednum, aes(Year,Pass_Rate_Male,col = 'Nottingham (Colwick)')) + geom_line(data = homeagednum,aes(Year,Pass_Rate_Male,col = 'Nottingham (Colwick)'))
+```
+
+## Permutation test
+
+```{r}
+set.seed(1111)
+x <- as.numeric(homeaged$Pass_Rate_Male)
+y <- as.numeric(LSEaged$Pass_Rate_Male)
+z <- c(x,y)
+stat <- abs(mean(x) - mean(y)) 
+k <- 0
+for (i in 1:10000) {
+    zperm <- sample(z,29)
+    statperm <- abs(mean(zperm[1:14])-mean(zperm[15:29])) 
+    if (statperm > stat) k <- k+1}
+```
+
+```{r}
+pval <- k/10000
+pval
+```
+
+
+```{r}
+
+```
+
